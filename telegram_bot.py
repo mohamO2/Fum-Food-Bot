@@ -1,7 +1,7 @@
 import json
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, Filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from uuid import uuid4
 
 # تنظیمات لاگ
@@ -235,7 +235,7 @@ def main():
     app.add_handler(CommandHandler("add", add_ad))
     app.add_handler(CommandHandler("list", list_ads))
     app.add_handler(CommandHandler("delete", delete_ad))
-    app.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(reserve_callback, pattern="reserve_"))
     
     # هندلر خطا

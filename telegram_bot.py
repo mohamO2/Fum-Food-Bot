@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7831120822:AAGmJ9idVGe_uCg1xx9kDqapw6m5P0etK2Y"
 CHANNEL_ID = "@FumFoodChannel"
 
-# فایل JSON برای ذخیره آگهی‌ها
+# فایل JSON برای ذخیره آگهی‌ها و چت‌ها
 DATA_FILE = "ads.json"
+CHAT_FILE = "chats.json"
 
 # لود کردن آگهی‌ها از فایل
 def load_ads():
@@ -27,6 +28,19 @@ def load_ads():
 def save_ads(ads):
     with open(DATA_FILE, 'w') as f:
         json.dump(ads, f, ensure_ascii=False, indent=4)
+
+# لود کردن چت‌ها از فایل
+def load_chats():
+    try:
+        with open(CHAT_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+# ذخیره چت‌ها در فایل
+def save_chats(chats):
+    with open(CHAT_FILE, 'w') as f:
+        json.dump(chats, f, ensure_ascii=False, indent=4)
 
 # چک کردن عضویت در کانال
 async def check_channel_membership(user_id, context):
@@ -94,6 +108,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # چک کردن حالت چت
+    chats = load_chats()
+    user_chat = None
+    for chat_id, chat in chats.items():
+        if chat['buyer_id'] == user_id and chat['status'] == 'active':
+            user_chat = chat
+            break
+        if chat['seller_id'] == user_id and chat['status'] == 'active':
+            user_chat = chat
+            break
+    
+    if user_chat:
+        # ارسال پیام به طرف مقابل
+        if user_chat['buyer_id'] == user_id:
+            other_id = user_chat['seller_id']
+            await context.bot.send_message(
+                chat_id=other_id,
+                text=f"پیام از رزروکننده: {update.message.text}"
+            )
+        else:
+            other_id = user_chat['buyer_id']
+            await context.bot.send_message(
+                chat_id=other_id,
+                text=f"پیام از فروشنده: {update.message.text}"
+            )
+        return
+    
+    # ثبت آگهی
     if context.user_data.get('adding_ad'):
         ad_id = str(uuid4())
         ad_text = update.message.text
@@ -124,7 +166,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"آگهی شما با شناسه {ad_id} ثبت شد و توی کانال گذاشتم! 😎")
         context.user_data['adding_ad'] = False
 
-# مدیریت رزرو
+# مدیریت رزرو و شروع چت
 async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -146,28 +188,149 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("نمی‌تونی آگهی خودت رو رزرو کنی!")
         return
     
-    # اطلاع به خریدار (توی ربات)
+    # غیرفعال کردن دکمه رزرو
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=CHANNEL_ID,
+            message_id=ad['message_id'],
+            reply_markup=None
+        )
+    except Exception as e:
+        logger.error(f"Error removing button: {e}")
+    
+    # شروع چت ناشناس
+    chats = load_chats()
+    chat_id = str(uuid4())
+    chats[chat_id] = {
+        'ad_id': ad_id,
+        'seller_id': ad['user_id'],
+        'buyer_id': buyer_id,
+        'status': 'active'
+    }
+    save_chats(chats)
+    
+    # اطلاع به خریدار
     buyer_username = query.from_user.username or 'ناشناس'
     await context.bot.send_message(
         chat_id=buyer_id,
         text=f"تو آگهی «{ad['text']}» رو رزرو کردی! 🎉\n"
-             f"برای هماهنگی، لطفاً با فروشنده تماس بگیر."
+             f"حالا می‌تونی با فروشنده به‌صورت ناشناس چت کنی. پیامت رو بنویس:"
     )
     
-    # اطلاع به فروشنده (با دکمه حذف)
-    seller_id = ad['user_id']
-    keyboard = [[InlineKeyboardButton("حذف آگهی", callback_data=f"delete_{ad_id}")]]
+    # اطلاع به فروشنده
+    keyboard = [[InlineKeyboardButton("پایان چت", callback_data=f"endchat_{chat_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await context.bot.send_message(
-        chat_id=seller_id,
-        text=f"آگهی تو («{ad['text']}») توسط @{buyer_username} رزرو شد! 😊\n"
-             f"برای هماهنگی باهاش تماس بگیر.\n"
-             f"اگه می‌خوای آگهی رو حذف کنی، از دکمه زیر استفاده کن:",
+        chat_id=ad['user_id'],
+        text=f"آگهی تو («{ad['text']}») توسط یه نفر رزرو شد! 😊\n"
+             f"حالا می‌تونی باهاش به‌صورت ناشناس چت کنی. پیامت رو بنویس:\n"
+             f"وقتی کارتون تموم شد، از دکمه زیر برای پایان چت استفاده کن:",
         reply_markup=reply_markup
     )
     
-    await query.answer("رزرو با موفقیت انجام شد! به ربات برو برای جزئیات.")
+    await query.answer("رزرو با موفقیت انجام شد! به ربات برو و چت رو شروع کن.")
+
+# پایان چت
+async def end_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    chat_id = query.data.split('_')[1]
+    chats = load_chats()
+    
+    if chat_id not in chats:
+        await query.answer("این چت دیگه معتبر نیست!")
+        return
+    
+    chat = chats[chat_id]
+    if chat['seller_id'] != user_id:
+        await query.answer("فقط فروشنده می‌تونه چت رو ببنده!")
+        return
+    
+    # دکمه‌های انتخاب برای حذف آگهی
+    keyboard = [
+        [InlineKeyboardButton("حذف آگهی و خروج", callback_data=f"deleteandexit_{chat_id}")],
+        [InlineKeyboardButton("خروج بدون حذف", callback_data=f"exit_{chat_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.message.edit_text(
+        "می‌خوای آگهی رو حذف کنی یا فقط از چت خارج شی؟",
+        reply_markup=reply_markup
+    )
+    await query.answer()
+
+# حذف آگهی و خروج
+async def delete_and_exit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    chat_id = query.data.split('_')[1]
+    chats = load_chats()
+    
+    if chat_id not in chats:
+        await query.answer("این چت دیگه معتبر نیست!")
+        return
+    
+    chat = chats[chat_id]
+    if chat['seller_id'] != user_id:
+        await query.answer("فقط فروشنده می‌تونه این کار رو بکنه!")
+        return
+    
+    ad_id = chat['ad_id']
+    ads = load_ads()
+    if ad_id in ads:
+        ads[ad_id]['status'] = 'deleted'
+        save_ads(ads)
+        
+        # ویرایش پیام در کانال
+        try:
+            await context.bot.edit_message_text(
+                chat_id=CHANNEL_ID,
+                message_id=ads[ad_id]['message_id'],
+                text=f"~~{ads[ad_id]['text']}~~\n(این آگهی حذف شد)",
+                reply_markup=None
+            )
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+    
+    # پایان چت
+    chats[chat_id]['status'] = 'closed'
+    save_chats(chats)
+    
+    # اطلاع به هر دو کاربر
+    await context.bot.send_message(
+        chat_id=chat['buyer_id'],
+        text="چت تموم شد. فروشنده آگهی رو حذف کرد و از چت خارج شد."
+    )
+    await query.message.edit_text("آگهی حذف شد و چت بسته شد! ✅")
+    await query.answer()
+
+# خروج بدون حذف
+async def exit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    chat_id = query.data.split('_')[1]
+    chats = load_chats()
+    
+    if chat_id not in chats:
+        await query.answer("این چت دیگه معتبر نیست!")
+        return
+    
+    chat = chats[chat_id]
+    if chat['seller_id'] != user_id:
+        await query.answer("فقط فروشنده می‌تونه این کار رو بکنه!")
+        return
+    
+    # پایان چت
+    chats[chat_id]['status'] = 'closed'
+    save_chats(chats)
+    
+    # اطلاع به هر دو کاربر
+    await context.bot.send_message(
+        chat_id=chat['buyer_id'],
+        text="چت تموم شد. فروشنده از چت خارج شد."
+    )
+    await query.message.edit_text("چت بسته شد، ولی آگهی حذف نشد. ✅")
+    await query.answer()
 
 # لیست آگهی‌های کاربر
 async def list_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,42 +350,9 @@ async def list_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for ad_id, ad in ads.items():
         if ad['user_id'] == str(user_id) and ad['status'] == 'active':
-            keyboard = [[InlineKeyboardButton("حذف آگهی", callback_data=f"delete_{ad_id}")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                f"آگهی:\n{ad['text']}\nشناسه: {ad_id}",
-                reply_markup=reply_markup
+                f"آگهی:\n{ad['text']}\nشناسه: {ad_id}"
             )
-
-# حذف آگهی (با دکمه)
-async def delete_ad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    ad_id = query.data.split('_')[1]
-    ads = load_ads()
-    
-    if ad_id not in ads or ads[ad_id]['user_id'] != str(user_id):
-        await query.answer("این آگهی وجود نداره یا مال تو نیست!")
-        return
-    
-    ads[ad_id]['status'] = 'deleted'
-    save_ads(ads)
-    
-    # ویرایش پیام در کانال
-    try:
-        await context.bot.edit_message_text(
-            chat_id=CHANNEL_ID,
-            message_id=ads[ad_id]['message_id'],
-            text=f"~~{ads[ad_id]['text']}~~\n(این آگهی حذف شد)",
-            reply_markup=None
-        )
-    except Exception as e:
-        logger.error(f"Error editing message: {e}")
-    
-    await query.message.edit_text(
-        f"آگهی با شناسه {ad_id} حذف شد! ✅"
-    )
-    await query.answer("آگهی حذف شد!")
 
 # مدیریت خطاها
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,7 +368,9 @@ def main():
     app.add_handler(CommandHandler("list", list_ads))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(reserve_callback, pattern="reserve_"))
-    app.add_handler(CallbackQueryHandler(delete_ad_callback, pattern="delete_"))
+    app.add_handler(CallbackQueryHandler(end_chat_callback, pattern="endchat_"))
+    app.add_handler(CallbackQueryHandler(delete_and_exit_callback, pattern="deleteandexit_"))
+    app.add_handler(CallbackQueryHandler(exit_callback, pattern="exit_"))
     
     # هندلر خطا
     app.add_error_handler(error_handler)

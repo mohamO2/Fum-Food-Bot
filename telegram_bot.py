@@ -177,7 +177,7 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = query.data.split('_')[1]
     ads = load_ads()
     
-    if ad_id not in ads:
+    if ad_id not in ads or ads[ad_id]['status'] != 'active':
         await query.answer("این آگهی دیگه معتبر نیست!")
         return
     
@@ -187,16 +187,6 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ad['user_id'] == buyer_id:
         await query.answer("نمی‌تونی آگهی خودت رو رزرو کنی!")
         return
-    
-    # غیرفعال کردن دکمه رزرو
-    try:
-        await context.bot.edit_message_reply_markup(
-            chat_id=CHANNEL_ID,
-            message_id=ad['message_id'],
-            reply_markup=None
-        )
-    except Exception as e:
-        logger.error(f"Error removing button: {e}")
     
     # شروع چت ناشناس
     chats = load_chats()

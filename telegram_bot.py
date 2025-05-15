@@ -67,7 +67,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "دستورات ربات:\n"
         "/add - ثبت آگهی غذای رزروشده\n"
         "/list - مشاهده آگهی‌های فعالت\n"
-        "/delete <id> - حذف آگهی با شناسه\n"
         "برای رزرو غذا، به کانال سر بزن: @FumFoodChannel"
     )
 
@@ -112,10 +111,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("رزرو", callback_data=f"reserve_{ad_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # ارسال به کانال
+        # ارسال به کانال (بدون نمایش آیدی کاربر)
         message = await context.bot.send_message(
             chat_id=CHANNEL_ID,
-            text=f"آگهی جدید:\n{ad_text}\nثبت‌کننده: @{update.message.from_user.username or 'ناشناس'}",
+            text=f"آگهی جدید:\n{ad_text}",
             reply_markup=reply_markup
         )
         
@@ -147,21 +146,28 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("نمی‌تونی آگهی خودت رو رزرو کنی!")
         return
     
-    # اطلاع به خریدار
-    await query.message.reply_text(
-        f"تو آگهی «{ad['text']}» رو رزرو کردی! 🎉\n"
-        f"برای هماهنگی با فروشنده: @{query.message.chat.username or 'ناشناس'}"
-    )
-    
-    # اطلاع به فروشنده
+    # اطلاع به خریدار (توی ربات)
+    buyer_username = query.from_user.username or 'ناشناس'
     await context.bot.send_message(
-        chat_id=ad['user_id'],
-        text=f"آگهی تو («{ad['text']}») توسط @{query.from_user.username or 'ناشناس'} رزرو شد! 😊\n"
-             f"برای هماهنگی باهاش تماس بگیر.\n"
-             f"اگه می‌خوای آگهی رو حذف کنی: /delete {ad_id}"
+        chat_id=buyer_id,
+        text=f"تو آگهی «{ad['text']}» رو رزرو کردی! 🎉\n"
+             f"برای هماهنگی، لطفاً با فروشنده تماس بگیر."
     )
     
-    await query.answer("رزرو با موفقیت انجام شد!")
+    # اطلاع به فروشنده (با دکمه حذف)
+    seller_id = ad['user_id']
+    keyboard = [[InlineKeyboardButton("حذف آگهی", callback_data=f"delete_{ad_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await context.bot.send_message(
+        chat_id=seller_id,
+        text=f"آگهی تو («{ad['text']}») توسط @{buyer_username} رزرو شد! 😊\n"
+             f"برای هماهنگی باهاش تماس بگیر.\n"
+             f"اگه می‌خوای آگهی رو حذف کنی، از دکمه زیر استفاده کن:",
+        reply_markup=reply_markup
+    )
+    
+    await query.answer("رزرو با موفقیت انجام شد! به ربات برو برای جزئیات.")
 
 # لیست آگهی‌های کاربر
 async def list_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,31 +185,24 @@ async def list_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("تو هیچ آگهی فعالی نداری! 😕")
         return
     
-    response = "آگهی‌های تو:\n"
     for ad_id, ad in ads.items():
         if ad['user_id'] == str(user_id) and ad['status'] == 'active':
-            response += f"شناسه: {ad_id}\n{ad['text']}\n\n"
-    
-    await update.message.reply_text(response)
+            keyboard = [[InlineKeyboardButton("حذف آگهی", callback_data=f"delete_{ad_id}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                f"آگهی:\n{ad['text']}\nشناسه: {ad_id}",
+                reply_markup=reply_markup
+            )
 
-# حذف آگهی
-async def delete_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if not await check_channel_membership(user_id, context):
-        await update.message.reply_text(
-            "اول باید توی کانال عضو بشی: @FumFoodChannel"
-        )
-        return
-    
-    if not context.args:
-        await update.message.reply_text("لطفا شناسه آگهی رو وارد کن: /delete <id>")
-        return
-    
-    ad_id = context.args[0]
+# حذف آگهی (با دکمه)
+async def delete_ad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    ad_id = query.data.split('_')[1]
     ads = load_ads()
     
     if ad_id not in ads or ads[ad_id]['user_id'] != str(user_id):
-        await update.message.reply_text("این آگهی وجود نداره یا مال تو نیست!")
+        await query.answer("این آگهی وجود نداره یا مال تو نیست!")
         return
     
     ads[ad_id]['status'] = 'deleted'
@@ -220,7 +219,10 @@ async def delete_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error editing message: {e}")
     
-    await update.message.reply_text(f"آگهی با شناسه {ad_id} حذف شد! ✅")
+    await query.message.edit_text(
+        f"آگهی با شناسه {ad_id} حذف شد! ✅"
+    )
+    await query.answer("آگهی حذف شد!")
 
 # مدیریت خطاها
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -234,9 +236,9 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("add", add_ad))
     app.add_handler(CommandHandler("list", list_ads))
-    app.add_handler(CommandHandler("delete", delete_ad))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(reserve_callback, pattern="reserve_"))
+    app.add_handler(CallbackQueryHandler(delete_ad_callback, pattern="delete_"))
     
     # هندلر خطا
     app.add_error_handler(error_handler)

@@ -122,6 +122,7 @@ async def add_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "مثال: ناهار - چلوکباب - ۱۲:۳۰ - ۱۵۰۰۰ تومن"
     )
     context.user_data['adding_ad'] = True
+    logger.info(f"User {user_id} started adding an ad")
 
 # دریافت اطلاعات آگهی و ارسال به مدیر
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,6 +162,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ثبت آگهی و ارسال به مدیر
     if context.user_data.get('adding_ad'):
+        logger.info(f"User {user_id} submitted an ad: {update.message.text}")
         ad_id = str(uuid4())
         ad_text = update.message.text
         ads = load_ads()
@@ -185,12 +187,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"آگهی جدید برای تأیید:\n\n📋 **متن آگهی**:\n{ad_text}\n\n👤 **ثبت‌کننده**: @{ads[ad_id]['submitter_username']}\n🆔 **شناسه آگهی**: {ad_id}",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
             )
             await update.message.reply_text(f"آگهی شما با شناسه {ad_id} ثبت شد و منتظر تأیید مدیره! ⏳")
         except Exception as e:
-            logger.error(f"Error sending ad to admin: {e}")
-            await update.message.reply_text("یه مشکل توی ارسال آگهی به مدیر پیش اومد. لطفاً دوباره امتحان کن.")
+            logger.error(f"Error sending ad to admin for user {user_id}: {e}")
+            await update.message.reply_text("یه مشکل توی ارسال آگهی به مدیر پیش اومد. لطفاً دوباره امتحان کن یا با پشتیبانی تماس بگیر.")
         
         context.user_data['adding_ad'] = False
 
@@ -234,7 +237,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.edit_text(f"آگهی با شناسه {ad_id} تأیید شد و توی کانال قرار گرفت!")
     except Exception as e:
-        logger.error(f"Error posting ad to channel: {e}")
+        logger.error(f"Error posting ad to channel for ad_id {ad_id}: {e}")
         await query.message.edit_text("یه مشکل توی ارسال آگهی به کانال پیش اومد!")
     
     await query.answer()
@@ -269,7 +272,7 @@ async def reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.edit_text(f"آگهی با شناسه {ad_id} رد شد!")
     except Exception as e:
-        logger.error(f"Error notifying user about rejection: {e}")
+        logger.error(f"Error notifying user about rejection for ad_id {ad_id}: {e}")
         await query.message.edit_text(f"آگهی با شناسه {ad_id} رد شد، اما اطلاع‌رسانی به کاربر با خطا مواجه شد!")
     
     await query.answer()

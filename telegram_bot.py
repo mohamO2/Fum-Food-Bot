@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7831120822:AAGmJ9idVGe_uCg1xx9kDqapw6m5P0etK2Y"
 CHANNEL_ID = "@FumFoodChannel"
 
-# آیدی مدیر (باید آیدی تلگرامت رو اینجا بذاری، مثلاً 123456789)
-ADMIN_ID = "YOUR_TELEGRAM_USER_ID"  # لطفاً آیدی تلگرامت رو جایگزین کن
+# آیدی مدیر (آیدی عددی @abasi_mohammad)
+ADMIN_ID = "123456789"  # لطفاً آیدی عددی واقعی خودت رو جایگزین کن
 
 # فایل JSON برای ذخیره آگهی‌ها و چت‌ها
 DATA_FILE = "ads.json"
@@ -183,7 +183,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("این آگهی معتبر نیست!")
         return
     
-    ads[ad_id]['status'] = 'active'
+    ads[ad_id]['status'] = 'active'  # اطمینان از تغییر وضعیت به active
     save_ads(ads)
     
     # ارسال به کانال
@@ -197,6 +197,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ads[ad_id]['message_id'] = message.message_id
     save_ads(ads)
     
+    logger.info(f"Ad {ad_id} approved and posted to channel with status: {ads[ad_id]['status']}")
     await query.message.edit_text(f"آگهی با شناسه {ad_id} تأیید و توی کانال قرار گرفت!")
     await query.answer()
 
@@ -232,8 +233,12 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = query.data.split('_')[1]
     ads = load_ads()
     
-    if ad_id not in ads or ads[ad_id]['status'] != 'active':
+    if ad_id not in ads:
         await query.answer("این آگهی دیگه معتبر نیست!")
+        return
+    if ads[ad_id]['status'] != 'active':
+        logger.info(f"Ad {ad_id} status is {ads[ad_id]['status']} instead of active")
+        await query.answer("این آگهی هنوز تأیید نشده یا معتبر نیست!")
         return
     
     ad = ads[ad_id]

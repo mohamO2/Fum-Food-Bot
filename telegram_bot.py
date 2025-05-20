@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "7831120822:AAGmJ9idVGe_uCg1xx9kDqapw6m5P0etK2Y"
 CHANNEL_ID = "@FumFoodChannel"
 
+# آیدی مدیر (باید آیدی تلگرامت رو اینجا بذاری، مثلاً 123456789)
+ADMIN_ID = "YOUR_TELEGRAM_USER_ID"  # لطفاً آیدی تلگرامت رو جایگزین کن
+
 # فایل JSON برای ذخیره آگهی‌ها و چت‌ها
 DATA_FILE = "ads.json"
 CHAT_FILE = "chats.json"
@@ -99,7 +102,7 @@ async def add_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data['adding_ad'] = True
 
-# دریافت اطلاعات آگهی
+# دریافت اطلاعات آگهی و ارسال به مدیر
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     if not await check_channel_membership(user_id, context):
@@ -135,36 +138,88 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
-    # ثبت آگهی
+    # ثبت آگهی و ارسال به مدیر
     if context.user_data.get('adding_ad'):
         ad_id = str(uuid4())
         ad_text = update.message.text
         ads = load_ads()
         
-        # ذخیره آگهی
+        # ذخیره آگهی با وضعیت pending
         ads[ad_id] = {
             'user_id': user_id,
             'text': ad_text,
-            'status': 'active'
+            'status': 'pending',
+            'submitter_id': user_id
         }
         save_ads(ads)
         
-        # ساخت دکمه رزرو
-        keyboard = [[InlineKeyboardButton("رزرو", callback_data=f"reserve_{ad_id}")]]
+        # ارسال به مدیر برای تأیید
+        keyboard = [
+            [InlineKeyboardButton("تأیید", callback_data=f"approve_{ad_id}")],
+            [InlineKeyboardButton("رد", callback_data=f"reject_{ad_id}")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # ارسال به کانال (بدون نمایش آیدی کاربر)
-        message = await context.bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=f"آگهی جدید:\n{ad_text}",
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"آگهی جدید برای تأیید:\n{ad_text}\nثبت‌کننده: @{update.message.from_user.username or 'ناشناس'}",
             reply_markup=reply_markup
         )
         
-        ads[ad_id]['message_id'] = message.message_id
-        save_ads(ads)
-        
-        await update.message.reply_text(f"آگهی شما با شناسه {ad_id} ثبت شد و توی کانال گذاشتم! 😎")
+        await update.message.reply_text(f"آگهی شما با شناسه {ad_id} ثبت شد و منتظر تأیید مدیره! 😎")
         context.user_data['adding_ad'] = False
+
+# مدیریت تأیید آگهی
+async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if str(user_id) != ADMIN_ID:
+        await query.answer("فقط مدیر می‌تونه این کار رو بکنه!")
+        return
+    
+    ad_id = query.data.split('_')[1]
+    ads = load_ads()
+    
+    if ad_id not in ads or ads[ad_id]['status'] != 'pending':
+        await query.answer("این آگهی معتبر نیست!")
+        return
+    
+    ads[ad_id]['status'] = 'active'
+    save_ads(ads)
+    
+    # ارسال به کانال
+    keyboard = [[InlineKeyboardButton("رزرو", callback_data=f"reserve_{ad_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    message = await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"آگهی جدید:\n{ads[ad_id]['text']}",
+        reply_markup=reply_markup
+    )
+    ads[ad_id]['message_id'] = message.message_id
+    save_ads(ads)
+    
+    await query.message.edit_text(f"آگهی با شناسه {ad_id} تأیید و توی کانال قرار گرفت!")
+    await query.answer()
+
+# رد آگهی
+async def reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if str(user_id) != ADMIN_ID:
+        await query.answer("فقط مدیر می‌تونه این کار رو بکنه!")
+        return
+    
+    ad_id = query.data.split('_')[1]
+    ads = load_ads()
+    
+    if ad_id not in ads or ads[ad_id]['status'] != 'pending':
+        await query.answer("این آگهی معتبر نیست!")
+        return
+    
+    del ads[ad_id]
+    save_ads(ads)
+    
+    await query.message.edit_text(f"آگهی با شناسه {ad_id} رد شد!")
+    await query.answer()
 
 # مدیریت رزرو و شروع چت
 async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -177,7 +232,7 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = query.data.split('_')[1]
     ads = load_ads()
     
-    if ad_id not in ads:
+    if ad_id not in ads or ads[ad_id]['status'] != 'active':
         await query.answer("این آگهی دیگه معتبر نیست!")
         return
     
@@ -187,16 +242,6 @@ async def reserve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ad['user_id'] == buyer_id:
         await query.answer("نمی‌تونی آگهی خودت رو رزرو کنی!")
         return
-    
-    # غیرفعال کردن دکمه رزرو
-    try:
-        await context.bot.edit_message_reply_markup(
-            chat_id=CHANNEL_ID,
-            message_id=ad['message_id'],
-            reply_markup=None
-        )
-    except Exception as e:
-        logger.error(f"Error removing button: {e}")
     
     # شروع چت ناشناس
     chats = load_chats()
@@ -371,6 +416,8 @@ def main():
     app.add_handler(CallbackQueryHandler(end_chat_callback, pattern="endchat_"))
     app.add_handler(CallbackQueryHandler(delete_and_exit_callback, pattern="deleteandexit_"))
     app.add_handler(CallbackQueryHandler(exit_callback, pattern="exit_"))
+    app.add_handler(CallbackQueryHandler(approve_callback, pattern="approve_"))
+    app.add_handler(CallbackQueryHandler(reject_callback, pattern="reject_"))
     
     # هندلر خطا
     app.add_error_handler(error_handler)
